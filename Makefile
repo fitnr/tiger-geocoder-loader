@@ -11,6 +11,7 @@ STATEFIPS = 41
 YEAR = 2017
 
 include config/counties-$(YEAR).ini
+
 sa := $(shell grep $(STATEFIPS) config/stateabbrev.txt | cut -f 2)
 countyfips := $(addprefix $(STATEFIPS),$(counties_$(STATEFIPS)))
 
@@ -28,7 +29,7 @@ files = $(cousub) $(place) $(addr) $(faces) $(edges) $(featnames)
 
 tables = tract cousub place faces featnames edges addr
 
-.PHONY: default $(tables) post-% load-% preload-% stage clean clean-%
+.PHONY: default $(tables) post-% load-% preload-% stage clean clean-% download
 
 default: post-place post-faces post-featnames post-edges post-addr
 
@@ -149,6 +150,8 @@ preload-edges: | stage
 stage:
 	$(psql) -c "DROP SCHEMA IF EXISTS tiger_staging CASCADE;"
 	$(psql) -c "CREATE SCHEMA tiger_staging;"
+
+download: $(foreach z,$(files),$(base)/$z.zip $(temp)/$z.shp $(temp)/$z.dbf)
 
 $(foreach z,$(files),$(temp)/$z.dbf): $(temp)/%.dbf: $(base)/%.zip | $(temp)
 	@mkdir -p $(@D)
