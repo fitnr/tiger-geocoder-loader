@@ -19,13 +19,15 @@ base = www2.census.gov/geo/tiger/TIGER$(YEAR)
 
 place = PLACE/tl_$(YEAR)_$(STATEFIPS)_place
 cousub = COUSUB/tl_$(YEAR)_$(STATEFIPS)_cousub
-tract = PLACE/tl_$(YEAR)_$(STATEFIPS)_tract
+tract = TRACT/tl_$(YEAR)_$(STATEFIPS)_tract
 addr = $(foreach f,$(countyfips),ADDR/tl_$(YEAR)_$f_addr)
 faces = $(foreach f,$(countyfips),FACES/tl_$(YEAR)_$f_faces)
 edges = $(foreach f,$(countyfips),EDGES/tl_$(YEAR)_$f_edges)
 featnames = $(foreach f,$(countyfips),FEATNAMES/tl_$(YEAR)_$f_featnames)
 
-files = $(cousub) $(place) $(addr) $(faces) $(edges) $(featnames)
+shps = $(cousub) $(place) $(tract) $(addr) $(faces) $(edges)
+dbfs = $(featnames)
+files = $(shps) $(dbfs)
 
 tables = tract cousub place faces featnames edges addr
 
@@ -34,6 +36,8 @@ tables = tract cousub place faces featnames edges addr
 default: post-place post-faces post-featnames post-edges post-addr
 
 $(tables): %: post-%
+
+post-cousub: load-cousub
 
 post-place: load-place
 	$(psql) -c "CREATE INDEX idx_$(sa)_place_soundex_name ON tiger_data.$(sa)_place USING btree (soundex(name));"
@@ -85,19 +89,19 @@ post-addr: load-addr
 
 post-tract: load-tract
 
-load-place: $(temp)/$(place).shp
+load-place: $(temp)/$(place).shp | stage
 	$(psql) -c "CREATE TABLE tiger_data.$(sa)_place ( CONSTRAINT pk_$(sa)_place PRIMARY KEY (plcidfp) ) INHERITS (tiger.place);"
 	$(s2pg) -c $< tiger_staging.$(sa)_place | $(psql)
 	$(psql) -c "ALTER TABLE tiger_staging.$(sa)_place RENAME geoid TO plcidfp; SELECT loader_load_staged_data(lower('$(sa)_place'), lower('$(sa)_place')); ALTER TABLE tiger_data.$(sa)_place ADD CONSTRAINT uidx_$(sa)_place_gid UNIQUE (gid);"
 
-load-cousub: $(temp)/$(cousub).shp
+load-cousub: $(temp)/$(cousub).shp | stage
 	$(psql) -c "CREATE TABLE tiger_data.$(sa)_cousub (CONSTRAINT pk_$(sa)_cousub PRIMARY KEY (cosbidfp), CONSTRAINT uidx_$(sa)_cousub_gid UNIQUE (gid)) INHERITS(tiger.cousub);"
 	$(s2pg) $< tiger_staging.$(sa)_cousub | $(psql)
 	$(psql) -c "ALTER TABLE tiger_staging.$(sa)_cousub RENAME geoid TO cosbidfp;SELECT loader_load_staged_data(lower('$(sa)_cousub'), lower('$(sa)_cousub')); ALTER TABLE tiger_data.$(sa)_cousub ADD CONSTRAINT chk_statefp CHECK (statefp = '$(STATEFIPS)');"
 	$(psql) -c "CREATE INDEX tiger_data_$(sa)_cousub_the_geom_gist ON tiger_data.$(sa)_cousub USING gist(the_geom);"
 	$(psql) -c "CREATE INDEX idx_tiger_data_$(sa)_cousub_countyfp ON tiger_data.$(sa)_cousub USING btree(countyfp);"
 
-load-tract: $(temp)/$(tract).shp
+load-tract: $(temp)/$(tract).shp | stage
 	$(psql) -c "CREATE TABLE tiger_data.$(sa)_tract (CONSTRAINT pk_$(sa)_tract PRIMARY KEY (tract_id) ) INHERITS(tiger.tract); "
 	$(s2pg) $< tiger_staging.$(sa)_tract | $(psql)
 	$(psql) -c "ALTER TABLE tiger_staging.$(sa)_tract RENAME geoid TO tract_id; SELECT loader_load_staged_data(lower('$(sa)_tract'), lower('$(sa)_tract')); "
@@ -122,7 +126,7 @@ $(addprefix load-,$(edges)): load-%: $(temp)/%.shp | preload-edges stage
 	$(psql) -c "SELECT loader_load_staged_data(lower('$(sa)_edges'), lower('$(sa)_edges'));"
 
 $(addprefix load-,$(featnames)): load-%: $(temp)/%.dbf | preload-featnames stage
-	$(s2pg) $< tiger_staging.$(sa)_featnames | $(psql)
+	$(s2pg) -n $< tiger_staging.$(sa)_featnames | $(psql)
 	$(psql) -c "SELECT loader_load_staged_data(lower('$(sa)_featnames'), lower('$(sa)_featnames'));"
 
 $(addprefix load-,$(addr)): load-%: $(temp)/%.shp | preload-addr stage
@@ -145,24 +149,28 @@ preload-addr: | stage
 
 preload-edges: | stage
 	$(psql) -c "CREATE TABLE tiger_data.$(sa)_edges( \
-	CONSTRAINT pk_DC_edges PRIMARY KEY (gid)) INHERITS (tiger.edges);"
+	CONSTRAINT pk_$(sa)_edges PRIMARY KEY (gid)) INHERITS (tiger.edges);"
 
 stage:
 	$(psql) -c "DROP SCHEMA IF EXISTS tiger_staging CASCADE;"
 	$(psql) -c "CREATE SCHEMA tiger_staging;"
 
-download: $(foreach z,$(files),$(base)/$z.zip $(temp)/$z.shp $(temp)/$z.dbf)
+download: $(foreach z,$(files),$(base)/$z.zip) \
+	$(foreach z,$(shps),$(temp)/$z.shp) \
+	$(foreach z,$(dbfs),$(temp)/$z.dbf)
 
 $(foreach z,$(files),$(temp)/$z.dbf): $(temp)/%.dbf: $(base)/%.zip | $(temp)
 	@mkdir -p $(@D)
 	$(unzip) -q -o -d $(@D) $<
+	@touch $@
 
 $(foreach z,$(files),$(temp)/$z.shp): $(temp)/%.shp: $(base)/%.zip | $(temp)
 	@mkdir -p $(@D)
 	$(unzip) -q -o -d $(@D) $<
+	@touch $@
 
 $(foreach z,$(files),$(base)/$z.zip): $(base)/%.zip:
-	$(wget) -q -t 2 --mirror --reject=html https://$@
+	$(wget) -q -t 5 --mirror --reject=html https://$@
 
 $(temp): ; mkdir -p $(temp)
 
