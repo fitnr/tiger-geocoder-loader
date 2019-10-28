@@ -130,7 +130,7 @@ $(addprefix load-,$(featnames)): load-%: $(temp)/%.dbf | preload-featnames stage
 	$(psql) -c "SELECT loader_load_staged_data(lower('$(sa)_featnames'), lower('$(sa)_featnames'));"
 
 $(addprefix load-,$(addr)): load-%: $(temp)/%.shp | preload-addr stage
-	$(s2pg) $< tiger_staging.$(sa)_addr | $(psql)
+	$(s2pg) -n $< tiger_staging.$(sa)_addr | $(psql)
 	$(psql) -c "SELECT loader_load_staged_data(lower('$(sa)_addr'), lower('$(sa)_addr'));"
 
 preload-faces: | stage
