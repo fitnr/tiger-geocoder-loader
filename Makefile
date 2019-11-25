@@ -24,8 +24,9 @@ addr = $(foreach f,$(countyfips),ADDR/tl_$(YEAR)_$f_addr)
 faces = $(foreach f,$(countyfips),FACES/tl_$(YEAR)_$f_faces)
 edges = $(foreach f,$(countyfips),EDGES/tl_$(YEAR)_$f_edges)
 featnames = $(foreach f,$(countyfips),FEATNAMES/tl_$(YEAR)_$f_featnames)
-
-shps = $(cousub) $(place) $(tract) $(addr) $(faces) $(edges)
+state = STATE/tl_$(YEAR)_us_state
+county = COUNTY/tl_$(YEAR)_us_county
+shps = $(cousub) $(place) $(tract) $(addr) $(faces) $(edges) $(state) $(county)
 dbfs = $(featnames)
 files = $(shps) $(dbfs)
 
@@ -154,6 +155,30 @@ preload-edges: | stage
 stage:
 	$(psql) -c "DROP SCHEMA IF EXISTS tiger_staging CASCADE;"
 	$(psql) -c "CREATE SCHEMA tiger_staging;"
+
+load-state: $(temp)/$(state).shp | stage
+	$(psql) -c "CREATE TABLE tiger_data.state_all ( \
+	CONSTRAINT pk_state_all PRIMARY KEY (statefp), \
+	CONSTRAINT uidx_state_all_stusps UNIQUE (stusps), \
+	CONSTRAINT uidx_state_all_gid UNIQUE (gid) ) INHERITS(tiger.state)"
+	$(s2pg) $< tiger_staging.state | $(psql)
+	$(psql) -c "SELECT loader_load_staged_data(lower('state'), lower('state_all')); "
+	$(psql) -c "CREATE INDEX tiger_data_state_all_the_geom_gist ON tiger_data.state_all USING gist(the_geom);"
+	$(psql) -c "VACUUM ANALYZE tiger_data.state_all"
+
+load-county: $(temp)/$(county).shp | stage
+	$(psql) -c "CREATE TABLE tiger_data.county_all( \
+	CONSTRAINT pk_tiger_data_county_all PRIMARY KEY (cntyidfp), \
+	CONSTRAINT uidx_tiger_data_county_all_gid UNIQUE (gid)) INHERITS(tiger.county)" 
+	$(s2pg) $< tiger_staging.county | $(psql)
+	$(psql) -c "ALTER TABLE tiger_staging.county RENAME geoid TO cntyidfp; SELECT loader_load_staged_data(lower('county'), lower('county_all'));"
+	$(psql) -c "CREATE INDEX tiger_data_county_the_geom_gist ON tiger_data.county_all USING gist(the_geom);"
+	$(psql) -c "CREATE UNIQUE INDEX uidx_tiger_data_county_all_statefp_countyfp ON tiger_data.county_all USING btree(statefp, countyfp);"
+	$(psql) -c "CREATE TABLE tiger_data.county_all_lookup(CONSTRAINT pk_county_all_lookup PRIMARY KEY (st_code, co_code)) INHERITS (tiger.county_lookup);"
+	$(psql) -c "VACUUM ANALYZE tiger_data.county_all;"
+	$(psql) -c "INSERT INTO tiger_data.county_all_lookup(st_code, state, co_code, name) \
+	SELECT statefp::integer, s.abbrev, c.countyfp::integer, c.name FROM tiger_data.county_all as c INNER JOIN state_lookup as s USING (statefp)"
+	$(psql) -c "VACUUM ANALYZE tiger_data.county_all_lookup;" 
 
 download: $(foreach z,$(files),$(base)/$z.zip) \
 	$(foreach z,$(shps),$(temp)/$z.shp) \
