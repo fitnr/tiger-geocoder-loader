@@ -1,4 +1,5 @@
 SHELL = bash
+.SHELLFLAGS = -opipefail
 
 unzip = unzip
 wget = wget
