@@ -21,21 +21,23 @@ base = www2.census.gov/geo/tiger/TIGER$(YEAR)
 place = PLACE/tl_$(YEAR)_$(STATEFIPS)_place
 cousub = COUSUB/tl_$(YEAR)_$(STATEFIPS)_cousub
 tract = TRACT/tl_$(YEAR)_$(STATEFIPS)_tract
+bg = BG/tl_$(YEAR)_$(STATEFIPS)_bg
+tabblock = TABBLOCK/tl_$(YEAR)_$(STATEFIPS)_tabblock10
 addr = $(foreach f,$(countyfips),ADDR/tl_$(YEAR)_$f_addr)
 faces = $(foreach f,$(countyfips),FACES/tl_$(YEAR)_$f_faces)
 edges = $(foreach f,$(countyfips),EDGES/tl_$(YEAR)_$f_edges)
 featnames = $(foreach f,$(countyfips),FEATNAMES/tl_$(YEAR)_$f_featnames)
 state = STATE/tl_$(YEAR)_us_state
 county = COUNTY/tl_$(YEAR)_us_county
-shps = $(cousub) $(place) $(tract) $(addr) $(faces) $(edges) $(state) $(county)
+shps = $(cousub) $(place) $(tract) $(bg) $(tabblock) $(addr) $(faces) $(edges) $(state) $(county)
 dbfs = $(featnames)
 files = $(shps) $(dbfs)
 
-tables = tract cousub place faces featnames edges addr
+tables = tract bg tabblock cousub place faces featnames edges addr
 
 .PHONY: default $(tables) post-% load-% preload-% stage clean clean-% download
 
-default: post-place post-faces post-featnames post-edges post-addr
+default: $(tables)
 
 $(tables): %: post-%
 
@@ -93,6 +95,19 @@ post-addr: load-addr
 	$(psql) -c "vacuum analyze tiger_data.$(sa)_addr;"
 
 post-tract: load-tract
+	$(psql) -c "CREATE INDEX tiger_data_$(sa)_tract_the_geom_gist ON tiger_data.$(sa)_tract USING gist(the_geom);"
+	$(psql) -c "ALTER TABLE tiger_data.$(sa)_tract ADD CONSTRAINT chk_statefp CHECK (statefp = '$(STATEFIPS)');"
+	$(psql) -c "VACUUM ANALYZE tiger_data.$(sa)_tract;"
+
+post-bg: load-bg
+	$(psql) -c "ALTER TABLE tiger_data.$(sa)_bg ADD CONSTRAINT chk_statefp CHECK (statefp = '$(STATEFIPS)');"
+	$(psql) -c "CREATE INDEX tiger_data_$(sa)_bg_the_geom_gist ON tiger_data.$(sa)_bg USING gist(the_geom);"
+	$(psql) -c "VACUUM ANALYZE tiger_data.$(sa)_bg;"
+
+post-tabblock: load-tabblock
+	$(psql) -c "ALTER TABLE tiger_data.$(sa)_tabblock ADD CONSTRAINT chk_statefp CHECK (statefp = '$(STATEFIPS)')"
+	$(psql) -c "CREATE INDEX tiger_data_$(sa)_tabblock_the_geom_gist ON tiger_data.$(sa)_tabblock USING gist(the_geom)"
+	$(psql) -c "VACUUM ANALYZE tiger_data.$(sa)_tabblock"
 
 load-place: $(temp)/$(place).shp | stage
 	$(psql) -c "CREATE TABLE tiger_data.$(sa)_place ( CONSTRAINT pk_$(sa)_place PRIMARY KEY (plcidfp) ) INHERITS (tiger.place);"
@@ -106,12 +121,25 @@ load-cousub: $(temp)/$(cousub).shp | stage
 	$(psql) -c "SELECT loader_load_staged_data(lower('$(sa)_cousub'), lower('$(sa)_cousub'))"
 
 load-tract: $(temp)/$(tract).shp | stage
-	$(psql) -c "CREATE TABLE tiger_data.$(sa)_tract (CONSTRAINT pk_$(sa)_tract PRIMARY KEY (tract_id) ) INHERITS(tiger.tract); "
+	$(psql) -c "CREATE TABLE tiger_data.$(sa)_tract \
+	(CONSTRAINT pk_$(sa)_tract PRIMARY KEY (tract_id)) INHERITS (tiger.tract)"
 	$(s2pg) $< tiger_staging.$(sa)_tract | $(psql)
-	$(psql) -c "ALTER TABLE tiger_staging.$(sa)_tract RENAME geoid TO tract_id; SELECT loader_load_staged_data(lower('$(sa)_tract'), lower('$(sa)_tract')); "
-	$(psql) -c "CREATE INDEX tiger_data_$(sa)_tract_the_geom_gist ON tiger_data.$(sa)_tract USING gist(the_geom);"
-	$(psql) -c "VACUUM ANALYZE tiger_data.$(sa)_tract;"
-	$(psql) -c "ALTER TABLE tiger_data.$(sa)_tract ADD CONSTRAINT chk_statefp CHECK (statefp = '$(STATEFIPS)');"
+	$(psql) -c "ALTER TABLE tiger_staging.$(sa)_tract RENAME geoid TO tract_id"
+	$(psql) -c "SELECT loader_load_staged_data(lower('$(sa)_tract'), lower('$(sa)_tract')); "
+
+load-bg: $(temp)/$(bg).shp | stage
+	$(psql) -c "CREATE TABLE tiger_data.$(sa)_bg \
+	(CONSTRAINT pk_$(sa)_bg PRIMARY KEY (bg_id)) INHERITS (tiger.bg);" 
+	$(s2pg) $< tiger_staging.$(sa)_bg | $(psql)
+	$(psql) -c "ALTER TABLE tiger_staging.$(sa)_bg RENAME geoid TO bg_id"
+	$(psql) -c "SELECT loader_load_staged_data(lower('$(sa)_bg'), lower('$(sa)_bg')); "
+
+load-tabblock: $(temp)/$(tabblock).shp | stage
+	$(psql) -c "CREATE TABLE tiger_data.$(sa)_tabblock \
+	(CONSTRAINT pk_$(sa)_tabblock PRIMARY KEY (tabblock_id)) INHERITS (tiger.tabblock)" 
+	$(s2pg) $< tiger_staging.$(sa)_tabblock10 | $(psql)
+	$(psql) -c "ALTER TABLE tiger_staging.$(sa)_tabblock10 RENAME geoid10 TO tabblock_id"
+	$(psql) -c "SELECT loader_load_staged_data(lower('$(sa)_tabblock10'), lower('$(sa)_tabblock'))"
 
 load-addr: $(addprefix load-,$(addr))
 
@@ -208,6 +236,9 @@ count:
 	SELECT 'faces', COUNT(*) FROM tiger_data.$(sa)_faces UNION \
 	SELECT 'featnames', COUNT(*) FROM tiger_data.$(sa)_featnames UNION \
 	SELECT 'place', COUNT(*) FROM tiger_data.$(sa)_place UNION \
+	SELECT 'tract', COUNT(*) FROM tiger_data.$(sa)_tract UNION \
+	SELECT 'bg', COUNT(*) FROM tiger_data.$(sa)_bg UNION \
+	SELECT 'tabblock', COUNT(*) FROM tiger_data.$(sa)_tabblock UNION \
 	SELECT 'zip_lookup_base', COUNT(*) FROM tiger_data.$(sa)_zip_lookup_base UNION \
 	SELECT 'zip_state', COUNT(*) FROM tiger_data.$(sa)_zip_state UNION \
 	SELECT 'zip_state_loc', COUNT(*) FROM tiger_data.$(sa)_zip_state_loc;"
