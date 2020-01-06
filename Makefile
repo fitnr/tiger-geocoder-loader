@@ -232,18 +232,10 @@ $(foreach z,$(files),$(base)/$z.zip): $(base)/%.zip:
 
 $(temp): ; mkdir -p $(temp)
 
-count:
-	$(psql) -c "SELECT 'addr' as $(sa), COUNT(*) count FROM tiger_data.$(sa)_addr UNION \
-	SELECT 'edges', COUNT(*) FROM tiger_data.$(sa)_edges UNION \
-	SELECT 'faces', COUNT(*) FROM tiger_data.$(sa)_faces UNION \
-	SELECT 'featnames', COUNT(*) FROM tiger_data.$(sa)_featnames UNION \
-	SELECT 'place', COUNT(*) FROM tiger_data.$(sa)_place UNION \
-	SELECT 'tract', COUNT(*) FROM tiger_data.$(sa)_tract UNION \
-	SELECT 'bg', COUNT(*) FROM tiger_data.$(sa)_bg UNION \
-	SELECT 'tabblock', COUNT(*) FROM tiger_data.$(sa)_tabblock UNION \
-	SELECT 'zip_lookup_base', COUNT(*) FROM tiger_data.$(sa)_zip_lookup_base UNION \
-	SELECT 'zip_state', COUNT(*) FROM tiger_data.$(sa)_zip_state UNION \
-	SELECT 'zip_state_loc', COUNT(*) FROM tiger_data.$(sa)_zip_state_loc;"
+count: $(addprefix count-,$(tables)) count-zip_lookup_base count-zip_state count-zip_state_loc
+	@$(psql) -c '\dt tiger_data.$(sa)*'
+
+count-%: ; @$(psql) -Atc "SELECT '$(sa)_$*' as $(sa)_$*, COUNT(*) count FROM tiger_data.$(sa)_$*"
 
 clean: $(addprefix clean-,$(tables)) clean-zip_lookup_base clean-zip_state clean-zip_state_loc
 
