@@ -1,6 +1,8 @@
 SHELL = /bin/bash
 .SHELLFLAGS = -o pipefail
 
+.NOTPARALLEL:
+
 unzip = unzip
 wget = wget
 psql = psql
