@@ -1,5 +1,5 @@
-SHELL = bash
-.SHELLFLAGS = -opipefail
+SHELL = /bin/bash
+.SHELLFLAGS = -o pipefail
 
 unzip = unzip
 wget = wget
