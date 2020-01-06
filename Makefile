@@ -243,6 +243,6 @@ count:
 	SELECT 'zip_state', COUNT(*) FROM tiger_data.$(sa)_zip_state UNION \
 	SELECT 'zip_state_loc', COUNT(*) FROM tiger_data.$(sa)_zip_state_loc;"
 
-clean: $(addprefix clean-,$(tables))
+clean: $(addprefix clean-,$(tables)) clean-zip_lookup_base clean-zip_state clean-zip_state_loc
 
 clean-%: ; $(psql) -c "drop table if exists tiger_data.$(sa)_$*"
