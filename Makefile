@@ -40,6 +40,9 @@ default: post-place post-faces post-featnames post-edges post-addr
 $(tables): %: post-%
 
 post-cousub: load-cousub
+	$(psql) -c "ALTER TABLE tiger_data.$(sa)_cousub ADD CONSTRAINT chk_statefp CHECK (statefp = '$(STATEFIPS)')"
+	$(psql) -c "CREATE INDEX tiger_data_$(sa)_cousub_the_geom_gist ON tiger_data.$(sa)_cousub USING gist(the_geom);"
+	$(psql) -c "CREATE INDEX idx_tiger_data_$(sa)_cousub_countyfp ON tiger_data.$(sa)_cousub USING btree(countyfp);"
 
 post-place: load-place
 	$(psql) -c "CREATE INDEX idx_$(sa)_place_soundex_name ON tiger_data.$(sa)_place USING btree (soundex(name));"
@@ -99,9 +102,8 @@ load-place: $(temp)/$(place).shp | stage
 load-cousub: $(temp)/$(cousub).shp | stage
 	$(psql) -c "CREATE TABLE tiger_data.$(sa)_cousub (CONSTRAINT pk_$(sa)_cousub PRIMARY KEY (cosbidfp), CONSTRAINT uidx_$(sa)_cousub_gid UNIQUE (gid)) INHERITS(tiger.cousub);"
 	$(s2pg) $< tiger_staging.$(sa)_cousub | $(psql)
-	$(psql) -c "ALTER TABLE tiger_staging.$(sa)_cousub RENAME geoid TO cosbidfp;SELECT loader_load_staged_data(lower('$(sa)_cousub'), lower('$(sa)_cousub')); ALTER TABLE tiger_data.$(sa)_cousub ADD CONSTRAINT chk_statefp CHECK (statefp = '$(STATEFIPS)');"
-	$(psql) -c "CREATE INDEX tiger_data_$(sa)_cousub_the_geom_gist ON tiger_data.$(sa)_cousub USING gist(the_geom);"
-	$(psql) -c "CREATE INDEX idx_tiger_data_$(sa)_cousub_countyfp ON tiger_data.$(sa)_cousub USING btree(countyfp);"
+	$(psql) -c "ALTER TABLE tiger_staging.$(sa)_cousub RENAME geoid TO cosbidfp"
+	$(psql) -c "SELECT loader_load_staged_data(lower('$(sa)_cousub'), lower('$(sa)_cousub'))"
 
 load-tract: $(temp)/$(tract).shp | stage
 	$(psql) -c "CREATE TABLE tiger_data.$(sa)_tract (CONSTRAINT pk_$(sa)_tract PRIMARY KEY (tract_id) ) INHERITS(tiger.tract); "
