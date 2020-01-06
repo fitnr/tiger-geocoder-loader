@@ -50,7 +50,10 @@
 55	wi
 56	wy
 60	as
+64	fm
 66	gu
+68	mh
 69	mp
+70	pw
 72	pr
 78	vi
