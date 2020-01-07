@@ -31,7 +31,8 @@ edges = $(foreach f,$(countyfips),EDGES/tl_$(YEAR)_$f_edges)
 featnames = $(foreach f,$(countyfips),FEATNAMES/tl_$(YEAR)_$f_featnames)
 state = STATE/tl_$(YEAR)_us_state
 county = COUNTY/tl_$(YEAR)_us_county
-shps = $(cousub) $(place) $(tract) $(bg) $(tabblock) $(addr) $(faces) $(edges) $(state) $(county)
+zcta = ZCTA5/tl_$(YEAR)_us_zcta510
+shps = $(cousub) $(place) $(tract) $(bg) $(tabblock) $(addr) $(faces) $(edges) $(state) $(county) $(zcta)
 dbfs = $(featnames)
 files = $(shps) $(dbfs)
 
@@ -43,7 +44,9 @@ tables = $(layers) zip_lookup_base zip_state zip_state_loc
 
 default: $(layers)
 
-$(layers): %: post-%
+nation: state county zcta
+
+$(layers) state county zcta: %: post-%
 
 post-cousub: load-cousub
 	$(psql) -c "ALTER TABLE tiger_data.$(sa)_cousub ADD CONSTRAINT chk_statefp CHECK (statefp = '$(STATEFIPS)')"
@@ -87,6 +90,7 @@ post-edges: load-edges
 	$(psql) -c "INSERT INTO tiger_data.$(sa)_zip_lookup_base(zip,state,county,city, statefp) SELECT DISTINCT e.zipl, '$(sa)', c.name,p.name,'$(STATEFIPS)' FROM tiger_data.$(sa)_edges AS e INNER JOIN tiger.county As c  ON (e.countyfp = c.countyfp AND e.statefp = c.statefp AND e.statefp = '$(STATEFIPS)') INNER JOIN tiger_data.$(sa)_faces AS f ON (e.tfidl = f.tfid OR e.tfidr = f.tfid) INNER JOIN tiger_data.$(sa)_place As p ON(f.statefp = p.statefp AND f.placefp = p.placefp ) WHERE e.zipl IS NOT NULL;"
 	$(psql) -c "ALTER TABLE tiger_data.$(sa)_zip_lookup_base ADD CONSTRAINT chk_statefp CHECK (statefp = '$(STATEFIPS)');"
 	$(psql) -c "CREATE INDEX idx_tiger_data_$(sa)_zip_lookup_base_citysnd ON tiger_data.$(sa)_zip_lookup_base USING btree(soundex(city));"
+	$(psql) -c "VACUUM ANALYZE tiger_data.$(sa)_zip_lookup_base"
 
 post-addr: load-addr
 	$(psql) -c "ALTER TABLE tiger_data.$(sa)_addr ADD CONSTRAINT chk_statefp CHECK (statefp = '$(STATEFIPS)');"
@@ -191,29 +195,68 @@ stage:
 	$(psql) -c "DROP SCHEMA IF EXISTS tiger_staging CASCADE;"
 	$(psql) -c "CREATE SCHEMA tiger_staging;"
 
+# National tables
+
+post-state: load-state
+	$(psql) -c "CREATE INDEX tiger_data_state_all_the_geom_gist ON tiger_data.state_all USING gist (the_geom)"
+	$(psql) -c "VACUUM ANALYZE tiger_data.state_all"
+
 load-state: $(temp)/$(state).shp | stage
 	$(psql) -c "CREATE TABLE tiger_data.state_all ( \
 	CONSTRAINT pk_state_all PRIMARY KEY (statefp), \
 	CONSTRAINT uidx_state_all_stusps UNIQUE (stusps), \
-	CONSTRAINT uidx_state_all_gid UNIQUE (gid) ) INHERITS(tiger.state)"
+	CONSTRAINT uidx_state_all_gid UNIQUE (gid) ) INHERITS (tiger.state)"
 	$(s2pg) $< tiger_staging.state | $(psql)
-	$(psql) -c "SELECT loader_load_staged_data(lower('state'), lower('state_all')); "
-	$(psql) -c "CREATE INDEX tiger_data_state_all_the_geom_gist ON tiger_data.state_all USING gist(the_geom);"
-	$(psql) -c "VACUUM ANALYZE tiger_data.state_all"
+	$(psql) -c "SELECT loader_load_staged_data(lower('state'), lower('state_all'))"
+
+post-zcta: load-zcta
+	$(psql) -c "INSERT INTO tiger_data.zcta5_all (statefp, zcta5ce, classfp, mtfcc, funcstat, aland, awater, intptlat, intptlon, partflg, the_geom) \
+	SELECT s.statefp, z.zcta5,  z.classfp, z.mtfcc, z.funcstat, z.aland, z.awater, z.intptlat, z.intptlon, \
+	  CASE WHEN ST_Covers(s.the_geom, z.the_geom) THEN 'N' ELSE 'Y' END, \
+	  ST_SnapToGrid(ST_Transform( \
+	    CASE WHEN ST_Covers(s.the_geom, z.the_geom) \
+	    THEN ST_SimplifyPreserveTopology(ST_Transform(z.the_geom,2163),1000) \
+	    ELSE ST_SimplifyPreserveTopology(ST_Intersection(ST_Transform(s.the_geom,2163), ST_Transform(z.the_geom,2163)),1000) \
+	    END,4269), 0.000001) AS geom \
+	  FROM tiger_data.zcta5_raw AS z \
+	    INNER JOIN tiger.state AS s ON (ST_Covers(s.the_geom, z.the_geom) OR ST_Overlaps(s.the_geom, z.the_geom))"
+	$(psql) -c "DROP TABLE tiger_data.zcta5_raw"
+	$(psql) -c "CREATE INDEX idx_tiger_data_zcta5_all_the_geom_gist ON tiger_data.zcta5_all USING gist (the_geom)"
+
+load-zcta: $(temp)/$(zcta).shp | stage
+	$(psql) -c "DROP TABLE IF EXISTS tiger_data.zcta5_raw;"
+	$(psql) -c "CREATE TABLE tiger_data.zcta5_raw ( \
+	zcta5 character varying(5), \
+	classfp character varying(2), \
+	mtfcc character varying(5), \
+	funcstat character varying(1), \
+	aland double precision, \
+	awater double precision, \
+	intptlat character varying(11), \
+	intptlon character varying(12), \
+	the_geom geometry(MultiPolygon,4269) )"
+	$(s2pg) $< tiger_staging.zcta510 | $(psql)
+	$(psql) -c "ALTER TABLE tiger.zcta5 DROP CONSTRAINT IF EXISTS enforce_geotype_the_geom"
+	$(psql) -c "CREATE TABLE tiger_data.zcta5_all ( \
+	  CONSTRAINT pk_zcta5_all PRIMARY KEY (zcta5ce,statefp), \
+	  CONSTRAINT uidx_zcta5_raw_all_gid UNIQUE (gid) ) INHERITS (tiger.zcta5);"
+	$(psql) -c "SELECT loader_load_staged_data(lower('zcta510'), lower('zcta5_raw'))"
+
+post-county: load-county
+	$(psql) -c "CREATE INDEX tiger_data_county_the_geom_gist ON tiger_data.county_all USING gist (the_geom)"
+	$(psql) -c "CREATE UNIQUE INDEX uidx_tiger_data_county_all_statefp_countyfp ON tiger_data.county_all USING btree(statefp, countyfp)"
+	$(psql) -c "CREATE TABLE tiger_data.county_all_lookup (CONSTRAINT pk_county_all_lookup PRIMARY KEY (st_code, co_code)) INHERITS (tiger.county_lookup)"
+	$(psql) -c "VACUUM ANALYZE tiger_data.county_all"
+	$(psql) -c "INSERT INTO tiger_data.county_all_lookup(st_code, state, co_code, name) \
+	SELECT statefp::integer, s.abbrev, c.countyfp::integer, c.name FROM tiger_data.county_all as c INNER JOIN state_lookup as s USING (statefp)"
+	$(psql) -c "VACUUM ANALYZE tiger_data.county_all_lookup"
 
 load-county: $(temp)/$(county).shp | stage
 	$(psql) -c "CREATE TABLE tiger_data.county_all( \
 	CONSTRAINT pk_tiger_data_county_all PRIMARY KEY (cntyidfp), \
-	CONSTRAINT uidx_tiger_data_county_all_gid UNIQUE (gid)) INHERITS(tiger.county)" 
+	CONSTRAINT uidx_tiger_data_county_all_gid UNIQUE (gid)) INHERITS(tiger.county)"
 	$(s2pg) $< tiger_staging.county | $(psql)
-	$(psql) -c "ALTER TABLE tiger_staging.county RENAME geoid TO cntyidfp; SELECT loader_load_staged_data(lower('county'), lower('county_all'));"
-	$(psql) -c "CREATE INDEX tiger_data_county_the_geom_gist ON tiger_data.county_all USING gist(the_geom);"
-	$(psql) -c "CREATE UNIQUE INDEX uidx_tiger_data_county_all_statefp_countyfp ON tiger_data.county_all USING btree(statefp, countyfp);"
-	$(psql) -c "CREATE TABLE tiger_data.county_all_lookup(CONSTRAINT pk_county_all_lookup PRIMARY KEY (st_code, co_code)) INHERITS (tiger.county_lookup);"
-	$(psql) -c "VACUUM ANALYZE tiger_data.county_all;"
-	$(psql) -c "INSERT INTO tiger_data.county_all_lookup(st_code, state, co_code, name) \
-	SELECT statefp::integer, s.abbrev, c.countyfp::integer, c.name FROM tiger_data.county_all as c INNER JOIN state_lookup as s USING (statefp)"
-	$(psql) -c "VACUUM ANALYZE tiger_data.county_all_lookup;" 
+	$(psql) -c "ALTER TABLE tiger_staging.county RENAME geoid TO cntyidfp; SELECT loader_load_staged_data(lower('county'), lower('county_all'))"
 
 download: $(foreach z,$(files),$(base)/$z.zip) \
 	$(foreach z,$(shps),$(temp)/$z.shp) \
