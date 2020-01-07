@@ -137,14 +137,14 @@ load-tract: $(temp)/$(tract).shp | stage
 
 load-bg: $(temp)/$(bg).shp | stage
 	$(psql) -c "CREATE TABLE tiger_data.$(sa)_bg \
-	(CONSTRAINT pk_$(sa)_bg PRIMARY KEY (bg_id)) INHERITS (tiger.bg);" 
+	(CONSTRAINT pk_$(sa)_bg PRIMARY KEY (bg_id)) INHERITS (tiger.bg)"
 	$(s2pg) $< tiger_staging.$(sa)_bg | $(psql)
 	$(psql) -c "ALTER TABLE tiger_staging.$(sa)_bg RENAME geoid TO bg_id"
 	$(psql) -c "SELECT loader_load_staged_data(lower('$(sa)_bg'), lower('$(sa)_bg')); "
 
 load-tabblock: $(temp)/$(tabblock).shp | stage
 	$(psql) -c "CREATE TABLE tiger_data.$(sa)_tabblock \
-	(CONSTRAINT pk_$(sa)_tabblock PRIMARY KEY (tabblock_id)) INHERITS (tiger.tabblock)" 
+	(CONSTRAINT pk_$(sa)_tabblock PRIMARY KEY (tabblock_id)) INHERITS (tiger.tabblock)"
 	$(s2pg) $< tiger_staging.$(sa)_tabblock10 | $(psql)
 	$(psql) -c "ALTER TABLE tiger_staging.$(sa)_tabblock10 RENAME geoid10 TO tabblock_id"
 	$(psql) -c "SELECT loader_load_staged_data(lower('$(sa)_tabblock10'), lower('$(sa)_tabblock'))"
