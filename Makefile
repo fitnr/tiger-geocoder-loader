@@ -35,13 +35,15 @@ shps = $(cousub) $(place) $(tract) $(bg) $(tabblock) $(addr) $(faces) $(edges) $
 dbfs = $(featnames)
 files = $(shps) $(dbfs)
 
-tables = tract bg tabblock cousub place faces featnames edges addr
+layers = tract bg tabblock cousub place faces featnames edges addr
 
-.PHONY: default $(tables) post-% load-% preload-% stage clean clean-% download
+tables = $(layers) zip_lookup_base zip_state zip_state_loc
 
-default: $(tables)
+.PHONY: default $(layers) post-% load-% preload-% stage clean clean-% download
 
-$(tables): %: post-%
+default: $(layers)
+
+$(layers): %: post-%
 
 post-cousub: load-cousub
 	$(psql) -c "ALTER TABLE tiger_data.$(sa)_cousub ADD CONSTRAINT chk_statefp CHECK (statefp = '$(STATEFIPS)')"
@@ -232,11 +234,20 @@ $(foreach z,$(files),$(base)/$z.zip): $(base)/%.zip:
 
 $(temp): ; mkdir -p $(temp)
 
-count: $(addprefix count-,$(tables)) count-zip_lookup_base count-zip_state count-zip_state_loc
-	@$(psql) -c '\dt tiger_data.$(sa)*'
+# Estimate rows and size for each table,
+# show blank rows for missing tables.
+count:
+	@$(psql) -qc "WITH t as (SELECT '$(sa)_' || unnest(string_to_array('$(tables)', ' ')) relname) \
+	SELECT relname AS table, \
+	  c.reltuples::bigint AS row_estimate, \
+	  pg_size_pretty(pg_total_relation_size(c.oid::regclass)) AS total, \
+	  pg_size_pretty(pg_indexes_size(c.oid::regclass)) AS index \
+	FROM t \
+	  LEFT JOIN pg_class c USING (relname) \
+	  LEFT JOIN pg_namespace n ON n.oid = c.relnamespace \
+	WHERE COALESCE(nspname, 'tiger_data') = 'tiger_data' \
+	ORDER BY relname ASC"
 
-count-%: ; @$(psql) -Atc "SELECT '$(sa)_$*' as $(sa)_$*, COUNT(*) count FROM tiger_data.$(sa)_$*"
-
-clean: $(addprefix clean-,$(tables)) clean-zip_lookup_base clean-zip_state clean-zip_state_loc
+clean: $(addprefix clean-,$(tables))
 
 clean-%: ; $(psql) -c "drop table if exists tiger_data.$(sa)_$*"
