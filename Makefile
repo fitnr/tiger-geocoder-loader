@@ -1,6 +1,8 @@
 SHELL = /bin/bash
 .SHELLFLAGS = -o pipefail
 
+export PGDATABASE PGPORT PGUSER PGHOST
+
 .NOTPARALLEL:
 
 unzip = unzip
