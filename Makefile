@@ -212,14 +212,16 @@ load-state: $(temp)/$(state).shp | stage
 	$(psql) -c "SELECT loader_load_staged_data(lower('state'), lower('state_all'))"
 
 post-zcta: load-zcta
+	$(psql) -c "CREATE TABLE tiger_data.zcta5_all ( \
+	  CONSTRAINT pk_zcta5_all PRIMARY KEY (zcta5ce,statefp), \
+	  CONSTRAINT uidx_zcta5_raw_all_gid UNIQUE (gid) ) INHERITS (tiger.zcta5);"
 	$(psql) -c "INSERT INTO tiger_data.zcta5_all (statefp, zcta5ce, classfp, mtfcc, funcstat, aland, awater, intptlat, intptlon, partflg, the_geom) \
 	SELECT s.statefp, z.zcta5,  z.classfp, z.mtfcc, z.funcstat, z.aland, z.awater, z.intptlat, z.intptlon, \
 	  CASE WHEN ST_Covers(s.the_geom, z.the_geom) THEN 'N' ELSE 'Y' END, \
-	  ST_SnapToGrid(ST_Transform( \
-	    CASE WHEN ST_Covers(s.the_geom, z.the_geom) \
-	    THEN ST_SimplifyPreserveTopology(ST_Transform(z.the_geom,2163),1000) \
-	    ELSE ST_SimplifyPreserveTopology(ST_Intersection(ST_Transform(s.the_geom,2163), ST_Transform(z.the_geom,2163)),1000) \
-	    END,4269), 0.000001) AS geom \
+	  ST_Multi(ST_SnapToGrid( \
+	    CASE WHEN ST_Covers(s.the_geom, z.the_geom) THEN z.the_geom \
+	    ELSE ST_CollectionExtract(ST_Intersection(s.the_geom, z.the_geom), 3) END, \
+	    0.000001)) AS geom \
 	  FROM tiger_data.zcta5_raw AS z \
 	    INNER JOIN tiger.state AS s ON (ST_Covers(s.the_geom, z.the_geom) OR ST_Overlaps(s.the_geom, z.the_geom))"
 	$(psql) -c "DROP TABLE tiger_data.zcta5_raw"
@@ -238,10 +240,6 @@ load-zcta: $(temp)/$(zcta).shp | stage
 	intptlon character varying(12), \
 	the_geom geometry(MultiPolygon,4269) )"
 	$(s2pg) $< tiger_staging.zcta510 | $(psql)
-	$(psql) -c "ALTER TABLE tiger.zcta5 DROP CONSTRAINT IF EXISTS enforce_geotype_the_geom"
-	$(psql) -c "CREATE TABLE tiger_data.zcta5_all ( \
-	  CONSTRAINT pk_zcta5_all PRIMARY KEY (zcta5ce,statefp), \
-	  CONSTRAINT uidx_zcta5_raw_all_gid UNIQUE (gid) ) INHERITS (tiger.zcta5);"
 	$(psql) -c "SELECT loader_load_staged_data(lower('zcta510'), lower('zcta5_raw'))"
 
 post-county: load-county
